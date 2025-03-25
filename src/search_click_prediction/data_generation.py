@@ -7,7 +7,11 @@ from search_click_prediction.transforms import hill
 
 
 def generate_data_search_data(
-    n_days: int = 400, n_geos: int = 10, seed: int = 42, start_date: str = "2020-01-01"
+    n_days: int = 400, 
+    n_geos: int = 10, 
+    seed: int = 42, 
+    start_date: str = "2020-01-01",
+    budget=None,
 ) -> xr.Dataset:
     np.random.seed(seed)
     date = pd.date_range(start_date, periods=n_days, freq="D")
@@ -30,28 +34,27 @@ def generate_data_search_data(
     )  # Varies over time
 
     search_volume = xr.DataArray(
-        np.random.poisson(lam=lam * 10),
+        np.random.poisson(lam=lam * 50),
         coords={"date": date, "geo": geos},
         dims=["date", "geo"],
     )  # Daily search volume
+    if budget is None:
+        budget = .1*np.clip(
+            (yearly_seasonal_comp + 300)
+            + 5 * np.random.normal(size=(n_days, n_geos)).cumsum(axis=0),
+            0,
+            None,
+        )  # Varies over time
 
-    budget = np.clip(
-        (yearly_seasonal_comp + 300)
-        + 5 * np.random.normal(size=(n_days, n_geos)).cumsum(axis=0),
-        0,
-        None,
-    )  # Varies over time
+        
 
-    half_sat = np.mean(budget)
-    slope = 2.5
-
-    budget[60:67] = budget[60:67] * 1.2  # Double budget for a week
-    budget[300:307] = budget[300:307] * 1.2  # Double budget for a week
-    budget_expit = expit(hill(budget, half_sat, slope) - 2)
-    budget[30:37] = 0  # Turn off budget for a week
-    budget[200:207] = 0
-    budget_expit = budget_expit.where(budget > 0.01, 0)
-    impression_rate = (budget_expit) + 0 * lam_offset  # Varies over time
+        budget[60:67] = budget[60:67] * 1.2  # Double budget for a week
+        budget[300:307] = budget[300:307] * 1.2  # Double budget for a week
+        budget[30:37] = 0  # Turn off budget for a week
+        budget[200:207] = 0
+    half_sat = 30
+    slope = 1
+    impression_rate = hill(budget, half_sat, slope)*.25 + 0 * lam_offset  # Varies over time
     impressions = xr.DataArray(
         np.random.binomial(search_volume, impression_rate),
         coords={"date": date, "geo": geos},
@@ -64,12 +67,11 @@ def generate_data_search_data(
         / (yearly_seasonal_comp.max() - yearly_seasonal_comp.min())
     )
 
-    consumer_trends = 0.01 * np.cos(np.pi * 2 * time / 7) + 0.02 * expit(
-        0.1 * np.random.normal(size=n_days)
-    )  # Varies over time
+    consumer_trends = 0.01 * np.cos(np.pi * 2 * time / 7) + 0.005 * np.random.normal(size=n_days)
+      # Varies over time
 
-    click_rate = (
-        0.04 + yearly_seasonal_comp_ctr + consumer_trends + 0 * lam_offset
+    click_rate = expit(
+        -3 + 50*yearly_seasonal_comp_ctr + 30*consumer_trends + 0 * lam_offset
     )  # Varies over time
 
     observed_clicks = xr.DataArray(

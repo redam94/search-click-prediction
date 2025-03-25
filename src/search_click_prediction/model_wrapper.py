@@ -9,6 +9,13 @@ import pymc as pm
 import pytensor.tensor as pt
 from pymc_marketing.prior import handle_dims
 
+__all__ = [
+    "HSGPWrapper",
+    "FourierWrapper",
+    "PriorWrapper",
+    "DataWrapper"
+]
+
 class GeneralPrior(Protocol):
     def apply(self, data: xr.DataArray | pt.TensorLike) -> pt.TensorLike:
         pass
@@ -46,16 +53,16 @@ class CombNode(Node):
         )
 
     def apply(
-        self, data: list[xr.DataArray | pt.TensorLike], model: pm.Model | None = None
+        self, 
+        data: xr.DataArray | pt.TensorLike, 
+        model: pm.Model | None = None
     ) -> pt.TensorLike:
         model = pm.modelcontext(model)
-        assert len(self.children) == len(
-            data
-        ), "Children and data must be the same length"
+        
         with model:
-            self.children[0].apply(data[0])
-            for _child, _data in zip(self.children[1:], data[1:]):
-                _child.apply(_data)
+            self.children[0].apply(data)
+            for _child in (self.children[1:]):
+                _child.apply(data)
             self._variable = pm.Deterministic(
                 self.name,
                 self.agg_fn(
@@ -66,6 +73,7 @@ class CombNode(Node):
                 ),
                 dims=self._dims,
             )
+        return self._variable
 
 
 class SumNode(CombNode):
@@ -91,18 +99,18 @@ class AppliedNode(Node):
         model = pm.modelcontext(model)
 
         with model:
-            if isinstance(self._caller_node, CombNode):
-                data_input = self._input_node.apply(data)
-                self._variable = self._caller_node.agg_fn(
-                    handle_dims(
-                        child.apply(data_input), child._dims, self._caller_node._dims
-                    )
-                    for child in self._caller_node.children
-                )
-                return self._variable
+            # if isinstance(self._caller_node, CombNode):
+            #     data_input = self._input_node.apply(data)
+            #     self._variable = self._caller_node.agg_fn(
+            #         handle_dims(
+            #             child.apply(data_input), child._dims, self._caller_node._dims
+            #         )
+            #         for child in self._caller_node.children
+            #     )
+            #     return self._variable
 
-            self._variable = self._caller_node.apply(self._input_node.apply(data))
-            return self._variable
+            self._variable = self._caller_node.apply(self._input_node.apply(data), model=model)
+        return self._variable
 
 
 class HSGPWrapper(Node):
@@ -121,18 +129,18 @@ class HSGPWrapper(Node):
 
 
 class FourierWrapper(Node):
-    def __init__(self, fourier, name: str):
+    def __init__(self, fourier, dims: Tuple[str], name: str):
         super().__init__(name)
         self._fourier = fourier
-        self._dims = fourier.dims
+        self._dims = dims
 
     def apply(
         self, data: xr.DataArray | pt.TensorLike | None, model: pm.Model | None = None
     ) -> pt.TensorLike:
         model = pm.modelcontext(model)
         with model:
-            self._variable = self.Deterministic(
-                self.name, self._fourier.apply(data), self._dims
+            self._variable = pm.Deterministic(
+                self.name, self._fourier.apply(data), dims=self._dims
             )
         return self._variable
 
